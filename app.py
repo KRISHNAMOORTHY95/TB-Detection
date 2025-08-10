@@ -1,31 +1,69 @@
 import streamlit as st
-from tensorflow.keras.models import load_model
-from PIL import Image
 import numpy as np
-import cv2
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing import image
+from PIL import Image
+import os
 
-# Load the trained VGG16 model
-model = load_model(r'C:\Users\Pitchamani\Desktop\TB_Test\env\Scripts\VGG16_model.h5')
+# --------------------
+# Streamlit Page Config
+# --------------------
+st.set_page_config(page_title="Tuberculosis Detection", layout="centered")
+st.title("🫁 Tuberculosis Detection from Chest X-rays")
+st.write("Upload a chest X-ray image and choose the model to detect Tuberculosis.")
 
+# --------------------
+# Model Loader
+# --------------------
+@st.cache_resource
+def load_trained_model(model_path):
+    if not os.path.exists(model_path):
+        st.error(f"Model file not found: {model_path}")
+        st.stop()
+    return load_model(model_path)
+
+# Mapping model names to file paths
+model_files = {
+    "ResNet50": "ResNet50_best.h5",
+    "VGG16": "VGG16_best.h5",
+    "EfficientNetB0": "EfficientNetB0_best.h5"
+}
+
+# Model selection
+selected_model_name = st.selectbox("Select Model", list(model_files.keys()))
+model_path = model_files[selected_model_name]
+model = load_trained_model(model_path)
+
+# --------------------
+# Preprocessing Function
+# --------------------
 def preprocess_image(img):
-    img_uint8 = (img * 255).astype(np.uint8)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    img = clahe.apply(img_uint8)
-    img = cv2.GaussianBlur(img, (5, 5), 0)
-    return img / 255.0
-
-st.title("TB Detection from Chest X-ray")
-uploaded_file = st.file_uploader("Upload an X-ray image", type=['jpg'])
-
-if uploaded_file:
-    img = Image.open(uploaded_file).convert('L')
     img = img.resize((224, 224))
-    img_array = np.array(img)
-    img_array = preprocess_image(img_array)
-    img_array = img_array.reshape(1, 224, 224, 1)
-    img_array_3ch = np.repeat(img_array, 3, axis=-1)
-    prediction = model.predict(img_array_3ch)
-    prob = prediction[0][1]
-    result = "TB Positive" if prob > 0.5 else "Normal"
-    st.image(img, caption="Uploaded Image", use_container_width=True)
-    st.write(f"Prediction: {result} (Probability of TB: {prob:.4f})")
+    img_array = image.img_to_array(img)
+    img_array = np.expand_dims(img_array, axis=0)
+    img_array = img_array / 255.0
+    return img_array
+
+# --------------------
+# File Upload & Prediction
+# --------------------
+uploaded_file = st.file_uploader("📤 Upload a chest X-ray image", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    img = Image.open(uploaded_file).convert("RGB")
+    st.image(img, caption="Uploaded Image", use_column_width=True)
+    st.write("Processing image...")
+
+    processed_img = preprocess_image(img)
+    prediction = model.predict(processed_img)
+
+    # Assuming binary classification with sigmoid output
+    class_names = ["Normal", "Tuberculosis"]
+    prob = prediction[0][0]
+    predicted_class = class_names[int(prob > 0.5)]
+    confidence = prob if predicted_class == "Tuberculosis" else 1 - prob
+
+    st.success(f"**Prediction:** {predicted_class}")
+    st.info(f"**Confidence:** {confidence * 100:.2f}%")
+
+    st.write(f"**Model Used:** {selected_model_name}")
