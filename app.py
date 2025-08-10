@@ -2,7 +2,7 @@ import streamlit as st
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-import io
+import pandas as pd
 
 # Page config
 st.set_page_config(
@@ -42,38 +42,23 @@ else:
 # Preprocess image with validation
 def preprocess_image(img: Image.Image):
     try:
-        # Convert to RGB if not already
         if img.mode != 'RGB':
             img = img.convert("RGB")
-        
-        # Resize to model input size
         img = img.resize((224, 224), Image.Resampling.LANCZOS)
-        
-        # Convert to array and normalize
         img_array = np.array(img, dtype=np.float32) / 255.0
-        
-        # Add batch dimension
         img_array = np.expand_dims(img_array, axis=0)
-        
         return img_array, None
     except Exception as e:
         return None, str(e)
 
 def validate_image(uploaded_file):
-    """Validate uploaded file is a proper image"""
     try:
-        # Check file size (limit to 10MB)
         if uploaded_file.size > 10 * 1024 * 1024:
             return False, "File too large. Please upload an image smaller than 10MB."
-        
-        # Try to open as image
         image = Image.open(uploaded_file)
-        
-        # Check if it's a reasonable size for X-ray
         width, height = image.size
         if width < 100 or height < 100:
             return False, "Image too small. Please upload a higher resolution X-ray image."
-        
         return True, None
     except Exception as e:
         return False, f"Invalid image file: {str(e)}"
@@ -87,20 +72,17 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    # Validate the uploaded file
     is_valid, validation_error = validate_image(uploaded_file)
     
     if not is_valid:
         st.error(f"❌ {validation_error}")
     else:
         try:
-            # Display the uploaded image
             image = Image.open(uploaded_file)
             
             col1, col2 = st.columns([1, 1])
             with col1:
                 st.image(image, caption="Original X-ray", use_column_width=True)
-            
             with col2:
                 st.info(f"""
                 **Image Info:**
@@ -110,48 +92,45 @@ if uploaded_file is not None:
                 - File size: {uploaded_file.size / 1024:.1f} KB
                 """)
             
-            # Prediction button
             if st.button("🔬 Analyze X-ray", type="primary", use_container_width=True):
                 with st.spinner("🧠 AI is analyzing the X-ray image..."):
-                    # Preprocess image
                     img_array, preprocess_error = preprocess_image(image)
                     
                     if preprocess_error:
                         st.error(f"❌ Error preprocessing image: {preprocess_error}")
                     else:
                         try:
-                            # Make prediction
                             prediction = model.predict(img_array, verbose=0)[0][0]
                             
-                            # Determine label and confidence
-                            is_tb = prediction >= 0.5
+                            tb_prob = float(prediction)
+                            normal_prob = float(1 - prediction)
+                            is_tb = tb_prob >= 0.5
                             label = "TB Detected" if is_tb else "Normal"
-                            confidence = prediction if is_tb else 1 - prediction
                             
-                            # Display results
                             st.divider()
                             st.subheader("🔍 Analysis Results")
                             
-                            # Create columns for results
-                            result_col1, result_col2 = st.columns([1, 1])
+                            if is_tb:
+                                st.error(f"🚨 **{label}**")
+                            else:
+                                st.success(f"✅ **{label}**")
                             
-                            with result_col1:
-                                if is_tb:
-                                    st.error(f"🚨 **{label}**")
-                                else:
-                                    st.success(f"✅ **{label}**")
+                            colA, colB = st.columns(2)
+                            colA.metric("TB Probability", f"{tb_prob * 100:.1f}%")
+                            colB.metric("Normal Probability", f"{normal_prob * 100:.1f}%")
                             
-                            with result_col2:
-                                st.metric("Confidence", f"{confidence * 100:.1f}%")
+                            # Bar chart visualization
+                            prob_df = pd.DataFrame({
+                                'Condition': ['TB', 'Normal'],
+                                'Probability': [tb_prob, normal_prob]
+                            })
+                            prob_df.set_index('Condition', inplace=True)
+                            st.bar_chart(prob_df)
                             
-                            # Confidence bar
-                            st.progress(confidence, text=f"Model Confidence: {confidence * 100:.1f}%")
-                            
-                            # Additional information
                             with st.expander("📊 Detailed Results"):
-                                st.write(f"**Raw Prediction Score:** {prediction:.4f}")
+                                st.write(f"**Raw Prediction Score:** {tb_prob:.4f}")
                                 st.write(f"**Threshold:** 0.5")
-                                st.write(f"**Classification:** {'TB' if prediction >= 0.5 else 'Normal'}")
+                                st.write(f"**Classification:** {'TB' if is_tb else 'Normal'}")
                                 
                                 if is_tb:
                                     st.warning("""
@@ -172,12 +151,11 @@ if uploaded_file is not None:
                         
                         except Exception as e:
                             st.error(f"❌ Error during prediction: {str(e)}")
-                            st.write("Please try again or contact support if the issue persists.")
         
         except Exception as e:
             st.error(f"❌ Error loading image: {str(e)}")
 
-# Sidebar with information
+# Sidebar
 with st.sidebar:
     st.header("ℹ️ About")
     st.write("""
@@ -187,17 +165,6 @@ with st.sidebar:
     1. Upload a chest X-ray image
     2. The AI model analyzes the image
     3. Get classification results with confidence score
-    
-    **Model Details:**
-    - Architecture: ResNet50
-    - Input size: 224x224 pixels
-    - Training data: Chest X-ray images
-    
-    **Limitations:**
-    - For educational use only
-    - Not for medical diagnosis
-    - Accuracy depends on image quality
-    - Should not replace professional medical advice
     """)
     
     st.header("📋 Usage Tips")
@@ -207,12 +174,8 @@ with st.sidebar:
     - Ensure proper lighting and contrast
     - Upload standard chest X-ray views
     - File size should be reasonable (< 10MB)
-    
-    **Supported formats:**
-    - JPG, JPEG, PNG, BMP, TIFF
     """)
 
-# Footer
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
